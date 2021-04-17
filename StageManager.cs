@@ -5,6 +5,8 @@ using DG.Tweening;
 using Explorior;
 using System.Linq;
 using TW.GameSetting;
+using static StageUtlity;
+using TMPro;
 
 
 public class StageManager : MonoBehaviour
@@ -13,6 +15,8 @@ public class StageManager : MonoBehaviour
     /// プロックオリジナルオブジェクト
     /// </summary>
     [SerializeField] GameObject rootObject;
+
+    [SerializeField] TextMeshProUGUI pointText;
 
     /// <summary>
     /// ブロック一つ一つの管理変数
@@ -43,7 +47,7 @@ public class StageManager : MonoBehaviour
         rootObject.transform.ParentTransInitialize();
         rootObject.SetActive(false);
         gameManager = _gameManager;
-
+        pointText.text = string.Empty;
         //初期ステージ生成
         StartCoroutine(BloackInit());
 
@@ -55,22 +59,21 @@ public class StageManager : MonoBehaviour
     /// <returns></returns>
     IEnumerator BloackInit()
     {
-
-        SetBlock(0, 0);
+        SetBlock(Vector3.zero);
 
         for (int i = 1; i <= amount; i++)
         {
-            SetBlock(0, i);
-            SetBlock(i, 0);
-            SetBlock(0, -i);
-            SetBlock(-i, 0);
-
+            SetBlock(new Vector3(0,0,i));
+            SetBlock(new Vector3(i, 0, 0));
+            SetBlock(new Vector3(0, 0, -i));
+            SetBlock(new Vector3(-i,0, 0));
+      
             for (int j = 1; j <= amount; j++)
             {
-                SetBlock(i, j);
-                SetBlock(i, -j);
-                SetBlock(-i, j);
-                SetBlock(-i, -j);
+                SetBlock(new Vector3(i, 0, j));
+                SetBlock(new Vector3(i, 0, -j));
+                SetBlock(new Vector3(-i, 0, j));
+                SetBlock(new Vector3(-i, 0, -j));
             }
         }
 
@@ -85,108 +88,250 @@ public class StageManager : MonoBehaviour
     /// </summary>
     /// <param name="x"></param>
     /// <param name="y"></param>
-    public void SetBlock(int x, int y, BlockType blockType = BlockType.Grass)
+    public void SetBlock(Vector3 vector3, BlockType blockType = BlockType.Grass)
     {
+        if (blockControllers.FirstOrDefault(b => b.vector3 == vector3) != null)
+        {
+            Debug.LogError("重なって表示されています" + vector3.ToString());
+            //return;原因調査中
+        }
+
         var stage = Instantiate(rootObject, rootObject.transform.parent);
         float ajust = rootObject.transform.localScale.x;
-        stage.transform.localPosition = new Vector3(x * ajust, 0, y * ajust);
+        stage.transform.localPosition = vector3 * ajust;
         stage.SetActive(true);
-        stage.name = "(" + x + "," + y + ")";
+        stage.name = vector3.ToString();
 
         var bc = stage.GetComponent<BlockController>();
-        bc.Init(x, y, blockType, SetNewLine);
+        bc.Init(vector3, blockType, SetNewLineInit);
+ 
+
+        for (int i = 1; i <= vector3.y; i++)
+        {
+            var stage_bottom = Instantiate(rootObject, rootObject.transform.parent);
+            stage_bottom.transform.localPosition = new Vector3(vector3.x * ajust, i * ajust, vector3.z * ajust);
+            stage_bottom.SetActive(true);
+            stage_bottom.name = stage_bottom.transform.localPosition.ToString();
+            var bcbt = stage_bottom.GetComponent<BlockController>();
+            bcbt.Init(vector3, BlockType.Soil);
+
+            bc.downBlocks.Add(bcbt);
+        }
+
         blockControllers.Add(bc);
     }
 
-    public void SetNewLine(BlockController blockController)
+
+
+
+    public void SetNewLineInit(BlockController blockController)
     {
+
         if (beforeBlockController == null)
         {
             beforeBlockController = blockController;
+            return;
         }
 
-        int moveX = blockController.x - beforeBlockController.x;
-        int moveY = blockController.y - beforeBlockController.y;
+        pointText.text = blockController.vector3.ToString();
 
-        beforeBlockController = blockController;
+        int moveX = (int)(blockController.vector3.x - beforeBlockController.vector3.x);
+        int moveZ = (int)(blockController.vector3.z - beforeBlockController.vector3.z);
 
-        Debug.Log("x:" + moveX + "y:" + moveY);
+        Debug.Log(beforeBlockController.vector3 + ":" + blockController.vector3);
+        //履歴保存
+        beforeBlockController = blockController;    
         //進む方向
-        Direction direction = GetDirection(moveX, moveY);
-        //進む逆方向
-        Direction oppoDirection = GetDirection(-moveX, -moveY);
-
-        //進む方向のブロックの一番先っちょの座標
-        int directionMax = GetAddBlockNum(direction);
-        //進む逆方向のブロックの一番先っちょの座標
-        int directionMin = GetAddBlockNum(oppoDirection);
-
-        Debug.Log("direction:" + direction);
-        Debug.Log("oppoDirection" + oppoDirection + " directionMax:" + directionMax + " directionMin:" + directionMin);
-
-        bool vertical = direction == Direction.UP || direction == Direction.DOWN;
-        bool upperRight = direction == Direction.UP || direction == Direction.RIGHT;
-
-        //進む方向の先っちょのブロック配列
-        List<BlockController> directionTipBlocks = blockControllers.Where(bc =>
-            (vertical ? bc.y : bc.x) == (upperRight ? directionMax : directionMin)).ToList();
-        //進む逆方向の先っちょのブロック配列
-        List<BlockController> oppodirectionTipBlocks = blockControllers.Where(bc =>
-            (!vertical ? bc.y : bc.x) == (upperRight ? directionMin : directionMax) ).ToList();
-
-
-        //増やす量
-        int _amount = amount * 2;
-
-        directionTipBlocks.ForEach(bc => Debug.Log("directionTipBlocks:" + bc.x + ":" + bc.y));
-        //増やす基準点
-        int first = directionTipBlocks.Min(block => (vertical ? block.x : block.y));
-
-        Debug.Log("first:" + first);
-
-        //指定の方向に、指定の数に1列
-        for (int i = 0; i < _amount; i++)
+        Direction direction = GetDirection(moveX, moveZ);
+        if(IsCrossDirection(direction))
         {
-            int x = (vertical ? first + i : direction == Direction.RIGHT ? directionMax + 1: directionMax - 1);
-            int y = (!vertical ? first + i : direction == Direction.UP ? directionMax + 1 : directionMax - 1);
+            SetNewLine(direction, IsVerticalDirection(direction)? moveZ : moveX);
+        }
+        else
+        {
+            switch (direction)
+            {
+                case Direction.UPRIGHT:
+                    SetNewLine(Direction.UP, moveZ);
+                    SetNewLine(Direction.RIGHT, moveX);
+                    break;
+                case Direction.DOWNRIGHT:
+                    SetNewLine(Direction.DOWN, moveZ);
+                    SetNewLine(Direction.RIGHT, moveX);
+                    break;
+                case Direction.UPLEFT:
+                    SetNewLine(Direction.UP, moveZ);
+                    SetNewLine(Direction.LEFT, moveX);
+                    break;
+                case Direction.DOWNLEFT:
+                    SetNewLine(Direction.DOWN, moveZ);
+                    SetNewLine(Direction.LEFT, moveX);
+                    break;
+                default:
+                    Debug.LogError("DirectionError:" + moveX + ":" + moveZ + ":" + direction);
+                    SetNewLine(Direction.UP, moveZ);
+                    break;
+            }
 
-            Debug.Log("adds:" + x +":" +y);
-            SetBlock(x, y);
+        }
+    }
+
+
+    /// <summary>
+    /// その方向に一列生成する 方向
+    /// </summary>
+    /// <param name="blockController"></param>
+    public void SetNewLine(Direction direction, int addValue = 1 )
+    {
+        addValue = Mathf.Abs(addValue);
+
+        //進む逆方向
+        Direction oppoDirection = GetOppoDirection(direction);
+
+        string log = "direction:" + direction + " oppoDirection:" + oppoDirection;
+        log += "\naddValue:"+ addValue;
+
+        if (addValue > 1)
+            Debug.Log("２列以上生成");
+
+        for(int i = 0;i< addValue; i++)
+        {
+            log += "\nadd:";
+
+            //進む方向の先っちょのブロック配列
+            List<BlockController> directionTipBlocks = GetDirectionTipBlocks(direction);
+
+            foreach (var Value in directionTipBlocks)
+            {
+                Vector3 moveVector = GetUnitXZ(direction, Value, i);
+                moveVector.y = GetYPosition(Value);
+
+                log += moveVector;
+                SetBlock(moveVector);
+            }
+
+
+            log += "\nsub:";
+            //ブロック削除
+            //進む逆方向の先っちょのブロック配列
+            List<BlockController> oppodirectionTipBlocks = GetDirectionTipBlocks(oppoDirection);
+
+            foreach(var Value in oppodirectionTipBlocks)
+            {
+                log += Value.vector3;
+                DestroyBlock(Value);
+            }
         }
 
-        //ブロック削除
-        oppodirectionTipBlocks.ForEach(bc => Debug.Log("subs:" + bc.x + ":" + bc.y));
-        oppodirectionTipBlocks.ForEach(bc => DestroyBlock(bc));
+        Debug.Log(log);
     }
 
-    public Direction GetDirection(int x, int y)
+
+    public int GetYPosition(BlockController blockController)
     {
-        if (x == 0 && y == 1) return Direction.UP;
-        if (x == 0 && y == -1) return Direction.DOWN;
-        if (x == 1 && y == 0) return Direction.RIGHT;
-        return Direction.LEFT;
+        List<BlockController> aroundBC = GetAroundBC(blockController);
+
+        //高地の数
+        List<int> zs = new List<int>();
+        aroundBC.ForEach(bc => zs.Add((int)bc.vector3.z));
+
+        int yMax = zs.Count == 0 ? 0 : zs.GetAtRandom();
+        //Debug.Log("zMax" + zMax);
+
+        int number = Random.Range(0, 100);
+
+        int returnY = 0;
+
+        if (number < 70)
+        {
+            returnY = (int)blockController.vector3.y;
+        }
+        else if (number < 95)
+        {
+            returnY = yMax - 1;
+
+            if (returnY < 0)
+                returnY = 0;
+
+        }
+        else
+        {
+            returnY = yMax + 1;
+        }
+
+        return returnY;
+
     }
 
+    /// <summary>
+    /// その方向の先っちょのブロック配列
+    /// </summary>
+    List<BlockController> GetDirectionTipBlocks(Direction direction)
+    {
+        //その方向の最高値
+        int num = GetAddBlockNum(direction);
+
+        //Debug.Log("direction:" + direction + " num:" + num);
+        //※進行方向 初期値の場合 UP:yが10 DOWN:yが-10 RIGHT:xが10 LEFT:xが-10 のブロック配列
+        //※進行逆方向　初期値の場合 UP:yが-10 DOWN:yが10 RIGHT:xが-10 LEFT:xが10 のブロック配列
+        if (IsVerticalDirection(direction))
+            return blockControllers.Where(bc => bc.vector3.z == num).ToList();
+        else
+            return blockControllers.Where(bc => bc.vector3.x == num).ToList();
+    }
+
+    /// <summary>
+    /// その方向の最高値
+    /// </summary>
     public int GetAddBlockNum(Direction direction)
     {
-        if (direction == Direction.UP) return blockControllers.Max(bc => bc.y);
-        if (direction == Direction.DOWN) return blockControllers.Min(bc => bc.y);
-        if (direction == Direction.RIGHT) return blockControllers.Max(bc => bc.x);
-        return blockControllers.Min(bc => bc.x);
+        if (direction == Direction.UP) return (int)blockControllers.Max(bc => bc.vector3.z);
+        if (direction == Direction.DOWN) return (int)blockControllers.Min(bc => bc.vector3.z);
+        if (direction == Direction.RIGHT) return (int)blockControllers.Max(bc => bc.vector3.x);
+        if (direction == Direction.LEFT) return (int)blockControllers.Min(bc => bc.vector3.x);
+
+        Debug.LogError("想定外:" + direction);
+
+        return (int)blockControllers.Max(bc => bc.vector3.y);
     }
 
 
-    public BlockController GetBlockController(int x, int y)
-    {
-        return blockControllers.FirstOrDefault(b => b.x == x && b.y == y);
-    }
+    public BlockController GetBlockController(int x, int z) => blockControllers.FirstOrDefault(b => b.vector3.x == x && b.vector3.z == z);
 
-    public void DestroyBlock(BlockController blockController) { DestroyBlock(blockController.x, blockController.y); }
-    public void DestroyBlock(int x, int y)
+    public void DestroyBlock(BlockController blockController)
     {
-        var block = GetBlockController(x, y);
+        foreach(var Value in blockController.downBlocks)
+        {
+            Destroy(Value.gameObject);
+        }
+
+        DestroyBlock((int)blockController.vector3.x, (int)blockController.vector3.z);
+    }
+    public void DestroyBlock(int x, int z)
+    {
+        var block = GetBlockController(x, z);
         Destroy(block.gameObject);
         blockControllers.Remove(block);
     }
 
+    public List<BlockController> GetAroundBC(BlockController blockController) => GetAroundBC((int)blockController.vector3.x, (int)blockController.vector3.y);
+    public List<BlockController> GetAroundBC(int bc_x, int bc_y)
+    {
+        var returnValue = new List<BlockController>();
+
+        for (int x = -1; x <= 1; x++)
+        {
+            for (int y = -1; y <= 1; y++)
+            {
+                if (x == 0 && y == 0) continue;
+
+                var bc = GetBlockController(bc_x + x, bc_y + y);
+
+                if (bc != null)
+                    returnValue.Add(bc);
+            }
+        }
+
+        return returnValue;
+    }
 }
